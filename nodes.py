@@ -4,7 +4,7 @@ import json
 from langchain_groq import ChatGroq
 from dotenv import load_dotenv
 from state import MyState
-
+import re
 load_dotenv()
 
 # Initialize LLM
@@ -193,9 +193,48 @@ def setup_database(state: MyState) -> MyState:
     print(f"Database setup and models creation for project {sanitized_project_name} complete.")
     state.database_status = f"Database and models for {sanitized_project_name} created successfully."
     return state
+
+ 
+def extract_json_from_text(text):
+    """Extract valid JSON from text that may contain markdown or other content"""
+    # Try to parse directly first
+    try:
+        json.loads(text)
+        return text  # If it parses correctly, return as is
+    except json.JSONDecodeError:
+        pass
+   
+    # Look for JSON pattern within code blocks
+    json_pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
+    match = re.search(json_pattern, text)
+    if match:
+        json_content = match.group(1)
+        try:
+            # Validate that this is valid JSON
+            json.loads(json_content)
+            return json_content
+        except json.JSONDecodeError:
+            pass
+   
+    # If no code block, look for curly braces pattern
+    json_pattern = r'(\{[\s\S]*\})'
+    match = re.search(json_pattern, text)
+    if match:
+        json_content = match.group(1)
+        try:
+            # Validate that this is valid JSON
+            json.loads(json_content)
+            return json_content
+        except json.JSONDecodeError:
+            pass
+   
+    # If all else fails, just return the original text and let the caller handle errors
+    return text
+
+
 def generate_code(state: MyState) -> MyState:
     """
-    Generate modular components (routes, models, authentication, etc.) for the FastAPI project.
+    Generate the complete FastAPI project structure based on the provided analysis.
     """
     project_name = state.project_name
     extracted_data = state.extracted_data
@@ -203,86 +242,110 @@ def generate_code(state: MyState) -> MyState:
     print(f"Generating code for project: {project_name}")
 
     # Define the folder paths
-    routes_folder = os.path.join(project_name, "app", "api", "routes")
-    models_folder = os.path.join(project_name, "app", "models")
-    auth_folder = os.path.join(project_name, "app", "auth")
+    project_root = project_name
 
-    # Ensure necessary directories exist
-    os.makedirs(routes_folder, exist_ok=True)
-    os.makedirs(models_folder, exist_ok=True)
-    os.makedirs(auth_folder, exist_ok=True)
+    # Prepare the prompt for the LLM
+    prompt = f"""
+    Based on the following project analysis, generate the complete FastAPI project structure in JSON format.
 
-    # Generate routes
-    for endpoint in extracted_data.get("endpoints", []):
-        route_file = os.path.join(routes_folder, f"{endpoint['path'].strip('/').replace('/', '_')}.py")
-        with open(route_file, "w") as f:
-            # Call the LLM to generate code for the route
-            prompt = f"""
-            Generate a FastAPI route for the following endpoint:
-            Method: {endpoint['method']}
-            Path: {endpoint['path']}
-            Parameters: {endpoint['parameters']}
-            Description: {endpoint['description']}
-            """
-            response = llm.invoke(prompt)
-            generated_code = response.content
+    Return ONLY valid JSON without any additional text, markdown formatting, or explanations.
 
-            # Write the generated code to the file
-            f.write(generated_code)
+    The JSON structure must be a dictionary with folder and file paths as keys and their content as values.
 
-    # Generate models
-    for model in extracted_data.get("models", []):
-        model_file = os.path.join(models_folder, f"{model['model_name'].lower()}.py")
-        with open(model_file, "w") as f:
-            # Call the LLM to generate code for the model
-            prompt = f"""
-            Generate a SQLAlchemy model for the following table:
-            Model Name: {model['model_name']}
-            Table Name: {model['table_name']}
-            Columns: {json.dumps(model['columns'], indent=2)}
-            """
-            response = llm.invoke(prompt)
-            generated_code = response.content
+    The base structure must include:
 
-            # Write the generated code to the file
-            f.write(generated_code)
+    - app/api directory with __init__.py
+    - app/api/routes directory with __init__.py
 
-    # Generate authentication utilities if required
-    if extracted_data.get("authentication", {}).get("jwt", False):
-        auth_file = os.path.join(auth_folder, "jwt_utils.py")
-        with open(auth_file, "w") as f:
-            # Call the LLM to generate JWT utilities
-            prompt = """
-            Generate a Python module for JWT authentication. Include functions for:
-            - Generating JWT tokens
-            - Validating JWT tokens
-            - Extracting user information from tokens
-            """
-            response = llm.invoke(prompt)
-            generated_code = response.content
+    Include additional:
 
-            # Write the generated code to the file
-            f.write(generated_code)
+    - File names as keys and their content as values
+    - Include a "requirements.txt" file with necessary dependencies
+    - Generate code for each file, do not leave any file empty, and complete the whole workflow, including all endpoints, their business logic, etc.
+    - Ensure the JSON response does not contain any extra text like comments, and the syntax of each JSON file is correct.
 
-    if extracted_data.get("authentication", {}).get("rbac", False):
-        rbac_file = os.path.join(auth_folder, "rbac_utils.py")
-        with open(rbac_file, "w") as f:
-            # Call the LLM to generate RBAC utilities
-            prompt = """
-            Generate a Python module for Role-Based Access Control (RBAC). Include:
-            - A function to check user roles
-            - Middleware for role-based access control
-            """
-            response = llm.invoke(prompt)
-            generated_code = response.content
+    Project Analysis:
 
-            # Write the generated code to the file
-            f.write(generated_code)
+    API Endpoints: {json.dumps(extracted_data.get("endpoints", []), indent=2)}
+
+    Business Logic: {json.dumps(extracted_data.get("business_logic", {}), indent=2)}
+
+    Authentication Requirements: {json.dumps(extracted_data.get("authentication", {}), indent=2)}
+
+    Database Schema: {json.dumps(extracted_data.get("models", []), indent=2)}
+
+    Example JSON format:
+    {{
+        "app/": {{
+            "routers/": {{
+                "user.py": "content of user.py",
+                "item.py": "content of item.py"
+            }},
+            "models/": {{
+                "user.py": "content of user.py",
+                "item.py": "content of item.py"
+            }},
+            "__init__.py": "content of __init__.py",
+            "main.py": "content of main.py"
+        }},
+        "requirements.txt": "fastapi\\nuvicorn\\npsycopg2-binary\\nalembic\\nsqlalchemy\\npython-dotenv",
+        "setup.sh": "content of setup.sh"
+    }}
+    """
+
+    # Call the LLM to generate the JSON structure
+    response = llm.invoke(prompt)
+    try:
+        # Extract the JSON structure from the response
+        response_content = response.content.strip()
+
+        # Log the raw response for debugging
+        print("Raw LLM Response:")
+        print(response_content)
+
+        # Remove any extra text like ```json
+        if response_content.startswith("```json"):
+            response_content = response_content[7:]
+        if response_content.endswith("```"):
+            response_content = response_content[:-3]
+
+        # Locate the JSON structure within the response
+        start_index = response_content.find("{")
+        end_index = response_content.rfind("}") + 1
+
+        if start_index == -1 or end_index == -1:
+            raise ValueError("No valid JSON object found in the response.")
+
+        json_content = response_content[start_index:end_index]
+
+        # Sanitize the JSON content
+        sanitized_json = (
+            json_content
+            .replace("\n", "\\n")  # Escape newlines
+            .replace("\t", "\\t")  # Escape tabs
+            .replace("\\\"", "\"")  # Fix escaped quotes
+            .replace("\"", "\\\"")  # Escape quotes properly
+        )
+
+        # Validate and parse the JSON structure
+        file_structure = json.loads(sanitized_json)
+    except (ValueError, json.JSONDecodeError) as e:
+        # Log the raw response for debugging
+        print("Failed to parse LLM response as JSON. Raw response:")
+        print(response.content)
+        raise ValueError(f"Failed to parse LLM response as JSON: {e}")
+
+    # Write the generated code to the respective files
+    for file_path, file_code in file_structure.items():
+        full_path = os.path.join(project_root, file_path)
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        with open(full_path, "w") as f:
+            # Write the code with proper formatting
+            f.write(file_code.strip() + "\n")
 
     print(f"Code generation for project {project_name} complete.")
     state.code_generation_status = "Code generated successfully."
     return state
-
 
 def generate_tests(state: MyState) -> MyState:
     """
