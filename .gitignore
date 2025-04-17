@@ -1,0 +1,67 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+env/
+
+# Environment variables
+.env
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*.bak
+
+# Test results
+htmlcov/
+.tox/
+.nox/
+coverage.*
+.cache
+pytest_cache/
+*.cover
+*.py,cover
+
+# IDE-specific files
+.vscode/
+.idea/
+
+# Docker and Podman
+*.pid
+*.sock
+*.tar
+*.log
+podman-compose.override.yml
+
+# Generated files
+*.db
+*.sqlite3
+*.pkl
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+*.spec
+
+# FastAPI-specific
+*.db-journal
+*.sqlite-journal
+
+# Documentation
+*.docx
+*.pdf
+
+# Miscellaneous
+.DS_Store
+Thumbs.db

@@ -1,0 +1,129 @@
+LangGraph Workflow Design	1
+Defining the Workflow Architecture	1
+Implementing LangGraph	1
+Milestone 1: Analysis	2
+Milestone 2: Generate Project Setup using Tools	2
+Sample Folder Structure for Modular FastAPI Project	2
+Milestone 3: Autonomous Coding Workflow	3
+Benchmarking Criteria for AI-Generated Code	4
+Milestone 4: Persistence & Iterations	4
+Milestone 5: Deployment	4
+Milestone 6: Documentation	4
+Milestone 7: LangSmith Logging & Debugging	5
+Milestone 8: FastAPI Endpoint for SRS Input	5
+
+Overview
+Build a system that takes a Software Requirements Specification (SRS) document as input, analyzes its content using LangGraph, and generates an AI-powered FastAPI project following best practices in software engineering. This includes unit test generation, code debugging, deployment, and documentation. This system should align with best practices in modern software engineering, incorporating structured workflows, automated debugging, extensive testing, and seamless deployment strategies. Additionally, it should leverage agentic workflows, iterative feedback loops, and self-improving mechanisms to enhance efficiency and reliability.
+LangGraph Workflow Design
+Defining the Workflow Architecture
+•	To build an efficient system, you need to identify the appropriate nodes, agents, and tools that facilitate:
+•	Code Generation – Transform structured SRS inputs into a well-defined FastAPI project with modular components.
+•	Unit Testing – Implement test-driven development (TDD) by generating and executing comprehensive test cases.
+•	Debugging & Refinement – Detect and resolve errors in real-time using automated feedback loops.
+•	Iterative Improvements – Enhance system performance by refining code based on runtime analysis and error logs.
+Implementing LangGraph
+•	Define nodes representing core operations such as parsing, code generation, testing, and deployment.
+•	Establish edges to determine the logical flow of execution across various stages of development.
+•	Maintain a GraphState to persist and track project-related data, including generated code, test results, and debugging iterations.
+•	Incorporate automated feedback loops to facilitate continuous learning and self-improvement in AI-driven development.
+
+Milestones
+Note: Milestones 1, 2, 3, 5, and 6 represent different components of the LangGraph workflow. These can be implemented as a node, agent, or tool depending on their function. LangGraph should handle iterative refinements using LLM-driven automation for AI tasks and engineering logic for structured execution.
+Milestone 1: Analysis
+1.	Build an AI workflow (LangGraph) to analyze the SRS document and extract key software requirements (Functional Requirements) for backend system generation.
+2.	Key components to analyze for backend generation: for example -
+a.	Required API endpoints and their parameters.
+b.	Backend logic (business rules, required computations).
+c.	Database schema (tables, relationships, constraints).
+d.	Authentication & authorization requirements.
+3.	Extract the database schema from the SRS screenshot using Llama-3 Vision (Groq Preview) to analyze the image and extract structured data, and use it to create models.
+Milestone 2: Generate Project Setup using Tools
+Backend:
+a.	System should be able to Initialize a structured Python FastAPI project with a modular folder structure.
+b.	System should be able to Create a virtual environment, activate it, and install required dependencies and required packages
+Database:
+c.	System should be able to use agents and tools to Set up and integrate a PostgreSQL database.
+d.	System should be able to Implement connection pooling and migrations (using Alembic or similar).
+e.	System should be able to Validate that all prerequisites (Python, PostgreSQL, necessary packages) are met.
+Sample Folder Structure for Modular FastAPI Project
+project_root/
+│── app/
+│   ├── api/
+│   │   ├── routes/
+│   │   │   ├── user.py
+│   │   │   ├── item.py
+│   │   │   └── __init__.py
+│   ├── models/
+│   │   ├── user.py
+│   │   ├── item.py
+│   │   └── __init__.py
+│   ├── services/
+│   ├── database.py
+│   ├── main.py
+│── tests/
+│── Dockerfile
+│── requirements.txt
+│── .env
+│── README.md
+Milestone 3: Autonomous Coding Workflow
+4.	Generate Unit Tests using LLM: System should be able to- 
+a.	Follow Test-Driven Development (TDD) principles.
+b.	Generate test cases first using Llama 3 70B before generating implementation code.
+c.	Use pytest for running tests and validating test coverage.
+d.	Ensure tests cover all functional aspects, including edge cases.
+5.	Generate Code using LLM: System should be able to- 
+a.	Generate modular components including:
+i.	Routes (API endpoints)
+ii.	Services
+iii.	Database Models
+iv.	main.py and other configurations
+b.	Ensure the generated code adheres to best practices:
+i.	Error handling
+ii.	Docstrings & documentation
+iii.	Logging & structured outputs
+c.	System should be able to Write the generated code into respective .py files.
+d.	Validate that the generated code is executable.
+6.	Code Execution & Debugging:
+a.	System should be able to autonomously Run unit tests and validate code functionality.
+b.	If tests fail or the application does not run, regenerate or refine code using LLM.
+c.	System should be able to Ensure:
+i.	The FastAPI backend starts successfully and connects to the database.
+ii.	API endpoints function correctly.
+Benchmarking Criteria for AI-Generated Code
+•	Correctness: Does the generated FastAPI project meet the extracted requirements?
+•	Code Quality: Is the AI-generated code structured, modular, and follows best practices?
+•	Testing: Do the unit tests cover all functional aspects?
+•	Automation: Does the workflow iteratively refine and improve the generated code?
+•	Execution Success: Does the project run without errors after generation?
+•	Security: Are best practices followed for input validation and authentication?
+Milestone 4: Persistence & Iterations
+1.	Ensure LangGraph retains previously generated code to maintain context.
+a.	Example: If the system has already generated a User model, it should remember variable names, function names, and dependencies when generating new code (e.g., referencing user_id in routes and services).
+b.	Use PostgreSQL as database as a persistent store.
+2.	The workflow should align new generations with previous ones to prevent redundancy and maintain consistency.
+Milestone 5: Deployment (Optional)
+1.	Use LLM to generate a zip file aligned with the project requirements. 
+Milestone 6: Documentation
+1.	Generate a graph visualization of the designed LangGraph AI workflow using Graphviz or similar tools like (Mermaid).
+2.	Use an LLM to generate project documentation:
+a.	README.md (setup, usage, project structure)
+b.	API documentation (endpoints, usage guide)
+Milestone 7: LangSmith Logging & Debugging
+1.	Create a LangSmith project to track logs for each execution.
+2.	Log key details, including:
+a.	Graph execution steps
+b.	API calls and responses
+c.	Errors and debugging insights
+3.	Iterations and refinements in code generation
+4.	Logs should be structured to provide insights into system behavior over multiple runs.
+Milestone 8: FastAPI Endpoint for SRS Input
+7.	Expose the system as a FastAPI service that:
+a.	Accepts SRS documents as input (only .docx format).
+i.	Validates file format and handles errors (unsupported format, empty file).
+b.	Uses the LangGraph workflow to generate the FastAPI project.
+c.	Returns the generated FastAPI project link/folder path and LangSmith logs as output.
+BROWNIE: Dynamic Agent Creation (New Milestone)
+•	Create an endpoint to generate dynamic agents based on user-specified tasks.
+•	The system should retrieve relevant knowledge using Retrieval-Augmented Generation (RAG) by processing attached PDF documents.
+•	The new agents should be autonomously developed using the extracted knowledge.
+
