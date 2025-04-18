@@ -260,39 +260,35 @@ def setup_database(state: MyState) -> MyState:
 
 def extract_json_from_text(text: str) -> str:
     """Extract valid JSON from text that may contain markdown or other content"""
-    # Try to parse directly first
+    # Clean up the text by removing markdown code block markers and any leading/trailing whitespace
+    if "```json" in text:
+        # Extract content between ```json and ```
+        pattern = r"```json\s*(\{[\s\S]*\})\s*```"
+        match = re.search(pattern, text)
+        if match:
+            text = match.group(1)
+    elif "```" in text:
+        # Extract content between ``` and ```
+        pattern = r"```\s*(\{[\s\S]*\})\s*```"
+        match = re.search(pattern, text)
+        if match:
+            text = match.group(1)
+
+    # Clean up any escaped quotes
+    text = text.replace('\\"', '"')
+    
+    # Remove any trailing commas before closing braces/brackets
+    text = re.sub(r',(\s*[}\]])', r'\1', text)
+
     try:
-        json.loads(text)
-        return text  # If it parses correctly, return as is
-    except json.JSONDecodeError:
-        pass
-   
-    # Look for JSON pattern within code blocks
-    json_pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
-    match = re.search(json_pattern, text)
-    if match:
-        json_content = match.group(1)
-        try:
-            # Validate that this is valid JSON
-            json.loads(json_content)
-            return json_content
-        except json.JSONDecodeError:
-            pass
-   
-    # If no code block, look for curly braces pattern
-    json_pattern = r'(\{[\s\S]*\})'
-    match = re.search(json_pattern, text)
-    if match:
-        json_content = match.group(1)
-        try:
-            # Validate that this is valid JSON
-            json.loads(json_content)
-            return json_content
-        except json.JSONDecodeError:
-            pass
-   
-    # If all else fails, just return the original text and let the caller handle errors
-    return text
+        # Validate JSON structure
+        json_obj = json.loads(text)
+        return json.dumps(json_obj)  # Return a properly formatted JSON string
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON parsing error: {e}")
+        logger.error(f"Attempted to parse: {text}")
+        raise ValueError(f"Invalid JSON structure: {e}")
+
 
 def ensure_directory_permissions(path: str) -> None:
     """Ensure directory and its parents have proper permissions"""
@@ -362,9 +358,7 @@ def process_structure(structure: dict, current_path: str = "", project_root: str
         raise ProjectGenerationError(f"Failed to process directory structure: {e}")
 
 def generate_code(state: MyState) -> MyState:
-    """
-    Generate the complete FastAPI project structure based on the provided analysis.
-    """
+    """Generate the complete FastAPI project structure based on the provided analysis."""
     project_name = state.project_name
     extracted_data = state.extracted_data
 
@@ -373,40 +367,53 @@ def generate_code(state: MyState) -> MyState:
     # Define the folder paths
     project_root = project_name
 
-    # Get LLM response for file structure
-    prompt = f"""
-    Based on the following project analysis, generate the complete FastAPI project structure in JSON format.
-    Return ONLY valid JSON without any additional text, markdown formatting, or explanations.
-    The JSON structure must be a dictionary with folder and file paths as keys and their content as values.
+    # Improved prompt with explicit JSON formatting instructions
+    prompt = f"""Generate a FastAPI project structure as a JSON object. 
+    The response should be a single JSON object with file paths as keys and file contents as string values.
+    Do not include any explanation or markdown formatting - ONLY the JSON object.
 
-    Project Analysis:
+    Use this exact format:
+    {{
+        "app/main.py": "content here",
+        "app/models/user.py": "content here"
+    }}
+
+    Include these components based on the following specifications:
+    
     API Endpoints: {json.dumps(extracted_data.get("endpoints", []), indent=2)}
-    Business Logic: {json.dumps(extracted_data.get("business_logic", {}), indent=2)}
-    Authentication Requirements: {json.dumps(extracted_data.get("authentication", {}), indent=2)}
     Database Schema: {json.dumps(extracted_data.get("models", []), indent=2)}
-    """
+    Authentication: {json.dumps(extracted_data.get("authentication", {}), indent=2)}
+    
+    Return ONLY the JSON object, no other text."""
 
-    response = llm.invoke(prompt)
     try:
+        response = llm.invoke(prompt)
         response_content = extract_json_from_text(response.content)
-        logger.info("Raw LLM Response:")
-        logger.info(response_content)
+        logger.debug("Raw LLM Response:")
+        logger.debug(response_content)
+        
+        # Parse the JSON content
         file_structure = json.loads(response_content)
-    except (ValueError, json.JSONDecodeError) as e:
-        logger.error("Failed to parse LLM response as JSON. Raw response:")
-        logger.error(response.content)
-        raise LLMResponseError(f"Failed to parse LLM response as JSON: {e}")
-
-    try:
+        
+        # Validate file structure
+        if not isinstance(file_structure, dict):
+            raise ValueError("LLM response is not a valid file structure dictionary")
+            
         # Process the file structure
         process_structure(file_structure, project_root=project_root)
         logger.info(f"Code generation for project {project_name} complete.")
         state.code_generation_status = "Code generated successfully."
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON parsing error: {e}")
+        logger.error(f"Raw response: {response.content}")
+        raise LLMResponseError(f"Failed to parse LLM response as JSON: {e}")
     except Exception as e:
         logger.error(f"Error during code generation: {e}")
         raise ProjectGenerationError(f"Failed to generate code: {e}")
 
     return state
+
 
 def generate_tests(state: MyState) -> MyState:
     """
