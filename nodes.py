@@ -35,8 +35,8 @@ class DatabaseSetupError(ProjectGenerationError):
 DEFAULT_MODEL = "llama-3.3-70b-versatile"
 DEFAULT_CONTAINER_IMAGE = "postgres:latest"
 DEFAULT_DB_PORT = 5432
-DEFAULT_DB_USER = "admin"
-DEFAULT_DB_PASSWORD = "admin"
+DEFAULT_DB_USER = os.getenv("POSTGRES_USER")
+DEFAULT_DB_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 
 def handle_subprocess_error(error: subprocess.CalledProcessError, context: str) -> None:
     """Handle subprocess errors with proper logging and context"""
