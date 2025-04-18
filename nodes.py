@@ -1,17 +1,68 @@
 import os
 import subprocess
 import json
-from langchain_groq import ChatGroq
-from dotenv import load_dotenv
-from state import MyState
 import re
 import shutil
 import stat
+import logging
+from pathlib import Path
+from typing import Dict, List, Optional, Any, Union
+from dataclasses import dataclass
+from langchain_groq import ChatGroq
+from dotenv import load_dotenv
+from state import MyState
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+class ProjectGenerationError(Exception):
+    """Base exception for project generation errors"""
+    pass
+
+class LLMResponseError(ProjectGenerationError):
+    """Exception for LLM response parsing errors"""
+    pass
+
+class DatabaseSetupError(ProjectGenerationError):
+    """Exception for database setup errors"""
+    pass
+
+# Constants
+DEFAULT_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_CONTAINER_IMAGE = "postgres:latest"
+DEFAULT_DB_PORT = 5432
+DEFAULT_DB_USER = "admin"
+DEFAULT_DB_PASSWORD = "admin"
+
+def handle_subprocess_error(error: subprocess.CalledProcessError, context: str) -> None:
+    """Handle subprocess errors with proper logging and context"""
+    logger.error(f"Error in {context}: {error}")
+    logger.error(f"Command output: {error.stdout}")
+    logger.error(f"Command stderr: {error.stderr}")
+    raise ProjectGenerationError(f"Failed to {context}: {error}")
+
+@dataclass
+class ProjectStructure:
+    """Project structure configuration"""
+    base_dirs = {
+        "app/api/routes": ["user.py", "item.py", "__init__.py"],
+        "app/models": ["user.py", "item.py", "__init__.py"],
+        "app/services": [],
+        "tests": [],
+        "": ["Dockerfile", "requirements.txt", ".env", "README.md"],
+        "app": ["database.py", "main.py"]
+    }
+
+# Load environment variables
 load_dotenv()
 
 # Initialize LLM
 llm = ChatGroq(
-    model="llama-3.3-70b-versatile",
+    model=DEFAULT_MODEL,
     temperature=0,
     max_tokens=None,
     timeout=None,
@@ -24,7 +75,7 @@ def analyze_srs(state: MyState) -> MyState:
     Analyze the SRS text and extract key software requirements.
     """
     srs_text = state.srs_text  # Use dot notation to access the attribute
-    print("Analyzing SRS document...")
+    logger.info("Analyzing SRS document...")
     prompt = f"""
     Analyze the following SRS document and extract the following information in valid JSON format:
     {{
@@ -64,9 +115,9 @@ def analyze_srs(state: MyState) -> MyState:
         response_content = response.content[response.content.index("{"):response.content.rindex("}")+1]
         extracted_data = json.loads(response_content)
     except json.JSONDecodeError:
-        raise ValueError("The LLM response is not in valid JSON format.")
-    print("SRS document analyzed successfully. Extracted data:")
-    print(json.dumps(extracted_data, indent=2))
+        raise LLMResponseError("The LLM response is not in valid JSON format.")
+    logger.info("SRS document analyzed successfully. Extracted data:")
+    logger.info(json.dumps(extracted_data, indent=2))
     
     # Update the state with the extracted data
     state.extracted_data = extracted_data
@@ -80,17 +131,10 @@ def setup_project(state: MyState) -> MyState:
     sanitized_project_name = project_name.replace(" ", "_").replace("-", "_")  # Sanitize project name
     extracted_data = state.extracted_data
 
-    print(f"Setting up project: {sanitized_project_name}")
+    logger.info(f"Setting up project: {sanitized_project_name}")
 
     # Define the project structure
-    structure = {
-        "app/api/routes": ["user.py", "item.py", "__init__.py"],
-        "app/models": ["user.py", "item.py", "__init__.py"],
-        "app/services": [],
-        "tests": [],
-        "": ["Dockerfile", "requirements.txt", ".env", "README.md"],
-        "app": ["database.py", "main.py"]
-    }
+    structure = ProjectStructure.base_dirs
 
     # Create directories and files
     for folder, files in structure.items():
@@ -117,10 +161,13 @@ def setup_project(state: MyState) -> MyState:
             os.chmod(file_path, stat.S_IWRITE)  # Ensure write permissions for the file
 
     # Initialize Python virtual environment and install dependencies
-    subprocess.run(["python", "-m", "venv", f"{sanitized_project_name}/venv"], check=True)
-    subprocess.run([f"{sanitized_project_name}/venv/Scripts/pip", "install", "-r", f"{sanitized_project_name}/requirements.txt"], check=True)
+    try:
+        subprocess.run(["python", "-m", "venv", f"{sanitized_project_name}/venv"], check=True)
+        subprocess.run([f"{sanitized_project_name}/venv/Scripts/pip", "install", "-r", f"{sanitized_project_name}/requirements.txt"], check=True)
+    except subprocess.CalledProcessError as e:
+        handle_subprocess_error(e, "initialize virtual environment and install dependencies")
 
-    print(f"Project {sanitized_project_name} setup complete.")
+    logger.info(f"Project {sanitized_project_name} setup complete.")
     state.project_structure = f"{sanitized_project_name} created successfully."
     return state
 
@@ -132,47 +179,59 @@ def setup_database(state: MyState) -> MyState:
     sanitized_project_name = project_name.replace(" ", "_").replace("-", "_")  # Sanitize project name
     extracted_data = state.extracted_data  # JSON response from the LLM
 
-    print(f"Setting up PostgreSQL database for project: {sanitized_project_name}")
+    logger.info(f"Setting up PostgreSQL database for project: {sanitized_project_name}")
 
     # Step 1: Install Podman (if not already installed)
     try:
         subprocess.run(["podman", "--version"], check=True)
     except FileNotFoundError:
-        print("Podman not found. Installing Podman...")
-        subprocess.run(["winget", "install", "--id", "RedHat.Podman"], check=True)
+        logger.info("Podman not found. Installing Podman...")
+        try:
+            subprocess.run(["winget", "install", "--id", "RedHat.Podman"], check=True)
+        except subprocess.CalledProcessError as e:
+            handle_subprocess_error(e, "install Podman")
 
     # Step 2: Pull PostgreSQL image
-    print("Pulling PostgreSQL image...")
-    subprocess.run(["podman", "pull", "postgres:latest"], check=True)
+    logger.info("Pulling PostgreSQL image...")
+    try:
+        subprocess.run(["podman", "pull", DEFAULT_CONTAINER_IMAGE], check=True)
+    except subprocess.CalledProcessError as e:
+        handle_subprocess_error(e, "pull PostgreSQL image")
 
     # Step 3: Check if the container already exists and remove it
     container_name = f"{sanitized_project_name}_db"
-    print(f"Checking if container '{container_name}' already exists...")
-    existing_containers = subprocess.run(
-        ["podman", "ps", "-a", "--format", "{{.Names}}"],
-        capture_output=True,
-        text=True,
-        check=True
-    ).stdout.splitlines()
+    logger.info(f"Checking if container '{container_name}' already exists...")
+    try:
+        existing_containers = subprocess.run(
+            ["podman", "ps", "-a", "--format", "{{.Names}}"],
+            capture_output=True,
+            text=True,
+            check=True
+        ).stdout.splitlines()
 
-    if container_name in existing_containers:
-        print(f"Container '{container_name}' already exists. Removing it...")
-        subprocess.run(["podman", "rm", "-f", container_name], check=True)
+        if container_name in existing_containers:
+            logger.info(f"Container '{container_name}' already exists. Removing it...")
+            subprocess.run(["podman", "rm", "-f", container_name], check=True)
+    except subprocess.CalledProcessError as e:
+        handle_subprocess_error(e, "check and remove existing container")
 
     # Step 4: Run PostgreSQL container
-    print("Running PostgreSQL container...")
-    subprocess.run([
-        "podman", "run", "-d",
-        "--name", container_name,
-        "-e", "POSTGRES_USER=admin",
-        "-e", "POSTGRES_PASSWORD=admin",
-        "-e", f"POSTGRES_DB={sanitized_project_name}",
-        "-p", "5432:5432",
-        "postgres:latest"
-    ], check=True)
+    logger.info("Running PostgreSQL container...")
+    try:
+        subprocess.run([
+            "podman", "run", "-d",
+            "--name", container_name,
+            "-e", f"POSTGRES_USER={DEFAULT_DB_USER}",
+            "-e", f"POSTGRES_PASSWORD={DEFAULT_DB_PASSWORD}",
+            "-e", f"POSTGRES_DB={sanitized_project_name}",
+            "-p", f"{DEFAULT_DB_PORT}:{DEFAULT_DB_PORT}",
+            DEFAULT_CONTAINER_IMAGE
+        ], check=True)
+    except subprocess.CalledProcessError as e:
+        handle_subprocess_error(e, "run PostgreSQL container")
 
     # Step 5: Create database models
-    print("Creating database models...")
+    logger.info("Creating database models...")
     models_folder = os.path.join(project_name, "app", "models")
     os.makedirs(models_folder, exist_ok=True)
 
@@ -195,12 +254,11 @@ def setup_database(state: MyState) -> MyState:
                 f.write(f"    {column_name} = Column({column_type}, {options})\n")
             f.write("\n")
 
-    print(f"Database setup and models creation for project {sanitized_project_name} complete.")
+    logger.info(f"Database setup and models creation for project {sanitized_project_name} complete.")
     state.database_status = f"Database and models for {sanitized_project_name} created successfully."
     return state
 
- 
-def extract_json_from_text(text):
+def extract_json_from_text(text: str) -> str:
     """Extract valid JSON from text that may contain markdown or other content"""
     # Try to parse directly first
     try:
@@ -236,6 +294,72 @@ def extract_json_from_text(text):
     # If all else fails, just return the original text and let the caller handle errors
     return text
 
+def ensure_directory_permissions(path: str) -> None:
+    """Ensure directory and its parents have proper permissions"""
+    try:
+        current = Path(path)
+        for parent in reversed(current.parents):
+            if parent.exists():
+                os.chmod(parent, stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
+    except Exception as e:
+        logger.error(f"Error setting permissions for directory {path}: {e}")
+        raise
+
+def create_file_with_content(file_path: str, content: str) -> None:
+    """Helper function to create file with proper path handling"""
+    try:
+        # Normalize path separators for Windows
+        normalized_path = os.path.normpath(file_path)
+        directory = os.path.dirname(normalized_path)
+        
+        # Create directory if it doesn't exist
+        if directory and not os.path.exists(directory):
+            Path(directory).mkdir(parents=True, exist_ok=True)
+            ensure_directory_permissions(directory)
+            logger.info(f"Created directory: {directory}")
+
+        # Remove file if it exists
+        if os.path.exists(normalized_path):
+            os.chmod(normalized_path, stat.S_IWRITE | stat.S_IREAD)  # Ensure write permissions
+            os.remove(normalized_path)
+
+        # Write content to file
+        with open(normalized_path, 'w', encoding='utf-8') as f:
+            f.write(content.strip() + '\n')
+
+        # Ensure write permissions for the file
+        os.chmod(normalized_path, stat.S_IWRITE | stat.S_IREAD)
+        logger.info(f"Created file: {normalized_path}")
+
+    except PermissionError as e:
+        logger.error(f"Permission denied while creating or writing to {normalized_path}: {e}")
+        raise PermissionError(f"Permission denied: {e}")
+    except Exception as e:
+        logger.error(f"Error creating file {normalized_path}: {e}")
+        raise
+
+def process_structure(structure: dict, current_path: str = "", project_root: str = "") -> None:
+    """Recursively process the file structure"""
+    try:
+        for key, value in structure.items():
+            # Remove any forward/backward slashes from the beginning and end
+            clean_key = key.strip('/').strip('\\')
+            path = os.path.normpath(os.path.join(current_path, clean_key))
+            
+            if isinstance(value, dict):
+                # If it's a dictionary, it's a directory
+                full_dir_path = os.path.join(project_root, path)
+                if not os.path.exists(full_dir_path):
+                    Path(full_dir_path).mkdir(parents=True, exist_ok=True)
+                    ensure_directory_permissions(full_dir_path)
+                process_structure(value, path, project_root)
+            else:
+                # If it's a string, it's a file
+                full_path = os.path.join(project_root, path)
+                create_file_with_content(full_path, value)
+    except Exception as e:
+        logger.error(f"Error processing structure at {current_path}: {e}")
+        raise ProjectGenerationError(f"Failed to process directory structure: {e}")
 
 def generate_code(state: MyState) -> MyState:
     """
@@ -244,125 +368,44 @@ def generate_code(state: MyState) -> MyState:
     project_name = state.project_name
     extracted_data = state.extracted_data
 
-    print(f"Generating code for project: {project_name}")
+    logger.info(f"Generating code for project: {project_name}")
 
     # Define the folder paths
     project_root = project_name
 
-    # Ensure the app directory is removed and recreated to avoid permission issues
-    app_directory = os.path.join(project_root, "app")
-    if os.path.exists(app_directory):
-        try:
-            # Remove read-only attribute if set
-            def remove_readonly(func, path, _):
-                os.chmod(path, stat.S_IWRITE)
-                func(path)
-
-            shutil.rmtree(app_directory, onerror=remove_readonly)  # Forcefully remove the directory
-            print(f"Removed existing directory: {app_directory}")
-        except PermissionError as e:
-            print(f"Failed to remove directory {app_directory} due to permission issues: {e}")
-            raise PermissionError(f"Permission denied: {e}")
-
-    try:
-        os.makedirs(app_directory, exist_ok=True)  # Recreate the directory
-        print(f"Recreated directory: {app_directory}")
-    except PermissionError as e:
-        print(f"Failed to create directory {app_directory} due to permission issues: {e}")
-        raise PermissionError(f"Permission denied: {e}")
-
-    # Prepare the prompt for the LLM
+    # Get LLM response for file structure
     prompt = f"""
     Based on the following project analysis, generate the complete FastAPI project structure in JSON format.
-
     Return ONLY valid JSON without any additional text, markdown formatting, or explanations.
-
     The JSON structure must be a dictionary with folder and file paths as keys and their content as values.
 
-    The base structure must include:
-
-    - app/api directory with __init__.py
-    - app/api/routes directory with __init__.py
-
-    Include additional:
-
-    - File names as keys and their content as values
-    - Include a "requirements.txt" file with necessary dependencies
-    - Generate code for each file, do not leave any file empty, and complete the whole workflow, including all endpoints, their business logic, etc.
-    - Ensure the JSON response does not contain any extra text like comments, and the syntax of each JSON file is correct.
-
     Project Analysis:
-
     API Endpoints: {json.dumps(extracted_data.get("endpoints", []), indent=2)}
-
     Business Logic: {json.dumps(extracted_data.get("business_logic", {}), indent=2)}
-
     Authentication Requirements: {json.dumps(extracted_data.get("authentication", {}), indent=2)}
-
     Database Schema: {json.dumps(extracted_data.get("models", []), indent=2)}
-
-    Example JSON format:
-    {{
-        "app/": {{
-            "routers/": {{
-                "user.py": "content of user.py",
-                "item.py": "content of item.py"
-            }},
-            "models/": {{
-                "user.py": "content of user.py",
-                "item.py": "content of item.py"
-            }},
-            "__init__.py": "content of __init__.py",
-            "main.py": "content of main.py"
-        }},
-        "requirements.txt": "fastapi\\nuvicorn\\npsycopg2-binary\\nalembic\\nsqlalchemy\\npython-dotenv",
-        "setup.sh": "content of setup.sh"
-    }}
     """
 
-    # Call the LLM to generate the JSON structure
     response = llm.invoke(prompt)
     try:
-        # Extract the JSON structure from the response
         response_content = extract_json_from_text(response.content)
-
-        # Log the raw response for debugging
-        print("Raw LLM Response:")
-        print(response_content)
-
-        # Validate and parse the JSON structure
+        logger.info("Raw LLM Response:")
+        logger.info(response_content)
         file_structure = json.loads(response_content)
     except (ValueError, json.JSONDecodeError) as e:
-        # Log the raw response for debugging
-        print("Failed to parse LLM response as JSON. Raw response:")
-        print(response.content)
-        raise ValueError(f"Failed to parse LLM response as JSON: {e}")
+        logger.error("Failed to parse LLM response as JSON. Raw response:")
+        logger.error(response.content)
+        raise LLMResponseError(f"Failed to parse LLM response as JSON: {e}")
 
-    # Write the generated code to the respective files
-    for file_path, file_code in file_structure.items():
-        full_path = os.path.join(project_root, file_path)
-        try:
-            # Remove the file if it already exists
-            if os.path.exists(full_path):
-                os.remove(full_path)
+    try:
+        # Process the file structure
+        process_structure(file_structure, project_root=project_root)
+        logger.info(f"Code generation for project {project_name} complete.")
+        state.code_generation_status = "Code generated successfully."
+    except Exception as e:
+        logger.error(f"Error during code generation: {e}")
+        raise ProjectGenerationError(f"Failed to generate code: {e}")
 
-            # Check if the directory exists before creating it
-            directory = os.path.dirname(full_path)
-            if not os.path.exists(directory):
-                os.makedirs(directory, exist_ok=True)
-
-            with open(full_path, "w") as f:
-                # Write the code with proper formatting
-                f.write(file_code.strip() + "\n")
-
-            # Ensure write permissions for the file
-            os.chmod(full_path, stat.S_IWRITE)
-        except PermissionError as e:
-            print(f"Permission denied while creating or writing to {full_path}: {e}")
-            raise PermissionError(f"Permission denied: {e}")
-
-    print(f"Code generation for project {project_name} complete.")
-    state.code_generation_status = "Code generated successfully."
     return state
 
 def generate_tests(state: MyState) -> MyState:
@@ -372,7 +415,7 @@ def generate_tests(state: MyState) -> MyState:
     project_name = state.project_name
     extracted_data = state.extracted_data
 
-    print(f"Generating unit tests for project: {project_name}")
+    logger.info(f"Generating unit tests for project: {project_name}")
 
     tests_folder = os.path.join(project_name, "tests")
     os.makedirs(tests_folder, exist_ok=True)
@@ -390,7 +433,7 @@ def generate_tests(state: MyState) -> MyState:
             f.write(f"    assert response.status_code == 200\n")
             f.write(f"    assert 'message' in response.json()\n")
 
-    print(f"Unit tests for project {project_name} generated successfully.")
+    logger.info(f"Unit tests for project {project_name} generated successfully.")
     state.test_generation_status = "Tests generated successfully."
     return state
 
@@ -401,27 +444,26 @@ def run_tests(state: MyState) -> MyState:
     project_name = state.project_name
     tests_folder = os.path.join(project_name, "tests")
 
-    print(f"Running unit tests for project: {project_name}")
+    logger.info(f"Running unit tests for project: {project_name}")
 
     try:
         result = subprocess.run(["pytest", tests_folder], capture_output=True, text=True, check=True)
-        print(result.stdout)
+        logger.info(result.stdout)
         state.test_results = result.stdout
     except subprocess.CalledProcessError as e:
-        print(e.stderr)
+        logger.error(e.stderr)
         state.test_results = e.stderr
         raise ValueError("Unit tests failed. Check the logs for details.")
 
-    print(f"Unit tests for project {project_name} completed successfully.")
+    logger.info(f"Unit tests for project {project_name} completed successfully.")
     return state
-
 
 def debug_and_refine(state: MyState) -> MyState:
     """
     Debug and refine the code using the LLM if tests fail.
     """
     if "failed" in state.test_results.lower():
-        print("Debugging and refining code...")
+        logger.info("Debugging and refining code...")
         prompt = f"""
         The following unit tests failed:\n{state.test_results}\n
         Refine the code to fix these issues and ensure all tests pass.
@@ -430,10 +472,10 @@ def debug_and_refine(state: MyState) -> MyState:
         refined_code = response.content
 
         # Apply the refined code (this part can be implemented as needed)
-        print("Code refined successfully.")
+        logger.info("Code refined successfully.")
         state.refinement_status = "Code refined successfully."
     else:
-        print("No issues found. Skipping refinement.")
+        logger.info("No issues found. Skipping refinement.")
         state.refinement_status = "No refinement needed."
 
     return state
