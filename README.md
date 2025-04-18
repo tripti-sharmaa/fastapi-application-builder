@@ -157,14 +157,6 @@ Generate a new FastAPI application from an SRS document.
 }
 ```
 
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit pull requests.
-
-## 📄 License
-
-[Your License Here]
-
 ## ✨ Acknowledgments
 
 - FastAPI community
