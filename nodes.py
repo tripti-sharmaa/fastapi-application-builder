@@ -5,6 +5,8 @@ from langchain_groq import ChatGroq
 from dotenv import load_dotenv
 from state import MyState
 import re
+import shutil
+import stat
 load_dotenv()
 
 # Initialize LLM
@@ -94,6 +96,7 @@ def setup_project(state: MyState) -> MyState:
     for folder, files in structure.items():
         folder_path = os.path.join(sanitized_project_name, folder)
         os.makedirs(folder_path, exist_ok=True)
+        os.chmod(folder_path, stat.S_IWRITE)  # Ensure write permissions for the folder
         for file in files:
             file_path = os.path.join(folder_path, file)
             with open(file_path, "w") as f:
@@ -110,6 +113,8 @@ def setup_project(state: MyState) -> MyState:
                     f.write("# Environment variables\n")
                 else:
                     f.write("")  # Leave other files empty
+
+            os.chmod(file_path, stat.S_IWRITE)  # Ensure write permissions for the file
 
     # Initialize Python virtual environment and install dependencies
     subprocess.run(["python", "-m", "venv", f"{sanitized_project_name}/venv"], check=True)
@@ -244,6 +249,28 @@ def generate_code(state: MyState) -> MyState:
     # Define the folder paths
     project_root = project_name
 
+    # Ensure the app directory is removed and recreated to avoid permission issues
+    app_directory = os.path.join(project_root, "app")
+    if os.path.exists(app_directory):
+        try:
+            # Remove read-only attribute if set
+            def remove_readonly(func, path, _):
+                os.chmod(path, stat.S_IWRITE)
+                func(path)
+
+            shutil.rmtree(app_directory, onerror=remove_readonly)  # Forcefully remove the directory
+            print(f"Removed existing directory: {app_directory}")
+        except PermissionError as e:
+            print(f"Failed to remove directory {app_directory} due to permission issues: {e}")
+            raise PermissionError(f"Permission denied: {e}")
+
+    try:
+        os.makedirs(app_directory, exist_ok=True)  # Recreate the directory
+        print(f"Recreated directory: {app_directory}")
+    except PermissionError as e:
+        print(f"Failed to create directory {app_directory} due to permission issues: {e}")
+        raise PermissionError(f"Permission denied: {e}")
+
     # Prepare the prompt for the LLM
     prompt = f"""
     Based on the following project analysis, generate the complete FastAPI project structure in JSON format.
@@ -297,38 +324,14 @@ def generate_code(state: MyState) -> MyState:
     response = llm.invoke(prompt)
     try:
         # Extract the JSON structure from the response
-        response_content = response.content.strip()
+        response_content = extract_json_from_text(response.content)
 
         # Log the raw response for debugging
         print("Raw LLM Response:")
         print(response_content)
 
-        # Remove any extra text like ```json
-        if response_content.startswith("```json"):
-            response_content = response_content[7:]
-        if response_content.endswith("```"):
-            response_content = response_content[:-3]
-
-        # Locate the JSON structure within the response
-        start_index = response_content.find("{")
-        end_index = response_content.rfind("}") + 1
-
-        if start_index == -1 or end_index == -1:
-            raise ValueError("No valid JSON object found in the response.")
-
-        json_content = response_content[start_index:end_index]
-
-        # Sanitize the JSON content
-        sanitized_json = (
-            json_content
-            .replace("\n", "\\n")  # Escape newlines
-            .replace("\t", "\\t")  # Escape tabs
-            .replace("\\\"", "\"")  # Fix escaped quotes
-            .replace("\"", "\\\"")  # Escape quotes properly
-        )
-
         # Validate and parse the JSON structure
-        file_structure = json.loads(sanitized_json)
+        file_structure = json.loads(response_content)
     except (ValueError, json.JSONDecodeError) as e:
         # Log the raw response for debugging
         print("Failed to parse LLM response as JSON. Raw response:")
@@ -338,10 +341,25 @@ def generate_code(state: MyState) -> MyState:
     # Write the generated code to the respective files
     for file_path, file_code in file_structure.items():
         full_path = os.path.join(project_root, file_path)
-        os.makedirs(os.path.dirname(full_path), exist_ok=True)
-        with open(full_path, "w") as f:
-            # Write the code with proper formatting
-            f.write(file_code.strip() + "\n")
+        try:
+            # Remove the file if it already exists
+            if os.path.exists(full_path):
+                os.remove(full_path)
+
+            # Check if the directory exists before creating it
+            directory = os.path.dirname(full_path)
+            if not os.path.exists(directory):
+                os.makedirs(directory, exist_ok=True)
+
+            with open(full_path, "w") as f:
+                # Write the code with proper formatting
+                f.write(file_code.strip() + "\n")
+
+            # Ensure write permissions for the file
+            os.chmod(full_path, stat.S_IWRITE)
+        except PermissionError as e:
+            print(f"Permission denied while creating or writing to {full_path}: {e}")
+            raise PermissionError(f"Permission denied: {e}")
 
     print(f"Code generation for project {project_name} complete.")
     state.code_generation_status = "Code generated successfully."
